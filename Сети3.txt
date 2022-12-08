@@ -1,0 +1,209 @@
+клиент
+#include <string>
+#define _WINSOCK_DEPRECATED_NO_WARNINGS  // подавление предупреждений библиотеки winsock2
+#include <winsock2.h>
+#include <iostream>
+#pragma comment (lib,"Ws2_32.lib")
+#pragma warning(disable: 4996)  // подавление предупреждения 4996
+using namespace std;
+#define request "get/ http/1.1\r\n Host:library.ru\r\n\r\n" //html запрос.
+#define max_packet_size   65535
+int main() {
+    WSADATA ws; //структура, содержащая информацию про версию библиотеки Winsock
+    SOCKET s;
+    sockaddr_in adr;
+    HOSTENT* hostname;
+    char    buff[max_packet_size];
+
+    if (WSAStartup(MAKEWORD(2, 2), &ws) != 0) { // создаём структура данных о версии библиотеки Winsock
+        cout << "Error with Library Winsock" << endl;
+        return -1; 
+    }
+
+    s = socket(AF_INET, SOCK_STREAM, 0);     // создаём сокет
+
+    if (s == -1)
+    {
+        cout << "Error with socket" << endl;
+        return -1;
+    }
+    hostname = gethostbyname("localhost");   // получаем адрес
+
+    if (hostname == NULL)
+    {
+        cout << "Error with HostName" << endl;
+        return -1;
+    }   
+
+    // заполняем  поля структуры сокета adr
+    adr.sin_family = AF_INET;
+    ((unsigned long*)&adr.sin_addr)[0] = ((unsigned long**)hostname->h_addr_list)[0][0];
+    adr.sin_port = htons(3500);
+
+    // устанавливаем соединение с сервером
+    int c = connect(s, (sockaddr*)&adr, sizeof(adr));
+    if (c == -1)
+    {
+        cerr << "listen failed with error: " << WSAGetLastError() << endl;
+        cout << "Error with Connect" << endl;
+        return -1;
+    } 
+    
+    int Send = send(s, (char*)&request, sizeof(request), 0);     // посылаем запрос серверу
+    if (Send == -1)
+    {
+        cout << "Error with Send" << endl;
+        return -1;
+    }  
+
+
+    int msg = 0;
+    do
+    {
+        int msg = recv(s, (char*)&buff, max_packet_size, 0);
+        if (msg == -1)
+        {
+            cout << "Error with Recieve" << endl;
+            return -1;
+        }
+        for (int i = 0; i < msg; i++)
+            cout << buff[i];
+
+    } while (msg != 0);
+
+    int cs = closesocket(s);
+    if (cs == 1)   // закрываем соединение 
+    {
+        cout << "Error with CloseSocket" << endl;
+        return -1;
+    }  
+    cin.get();
+    WSACleanup();
+}
+
+сервер
+#include <iostream>
+#include <sstream>
+#define _WINSOCK_DEPRECATED_NO_WARNINGS  // подавление предупреждений библиотеки winsock2
+#include <string>
+#include <WinSock2.h>
+#include <WS2tcpip.h>
+#pragma comment(lib, "Ws2_32.lib")
+#pragma warning(disable: 4996) 
+using std::cerr;
+using namespace std;
+
+int main() {
+    WSADATA ws;
+    if (WSAStartup(MAKEWORD(2, 2), &ws) != 0) { // создаём структура данных о версии библиотеки Winsock
+        cout << "Error with Library Winsock" << endl;
+        return -1;
+    }
+    struct addrinfo* addr = NULL;
+    // структура для IP-адреса  сервера
+    struct addrinfo hints;
+    ZeroMemory(&hints, sizeof(hints)); //Очищаем структуру hints(на всякий случай)
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = AI_PASSIVE;
+    // Инициализируем структуру addr 
+    // HTTP-сервер на 8000-м порту localhost
+    int result = getaddrinfo("127.0.0.1", "3500", &hints, &addr);
+    if (result != 0) {
+        cerr << "getaddrinfo failed: " << result << "\n";
+        WSACleanup(); // выгрузка библиотеки Ws2_32.dll
+        return 1;
+    }
+    // Создание сокета
+    int listen_socket =
+        socket(addr->ai_family, addr->ai_socktype,
+            addr->ai_protocol);
+    if (listen_socket == INVALID_SOCKET) {
+        cerr << "Error at socket: " << WSAGetLastError() << "\n";
+        freeaddrinfo(addr); //освобождаем память
+        WSACleanup();
+        return 1;
+    }
+    // Привязываем сокет к IP-адресу
+    result = bind(listen_socket, addr->ai_addr, (int)addr->ai_addrlen);
+    if (result == SOCKET_ERROR) {
+        cerr << "bind failed with error: " << WSAGetLastError() << "\n";
+        freeaddrinfo(addr); //освобождаем память
+        closesocket(listen_socket);
+        WSACleanup();
+        return 1;
+    }
+    // Инициализируем слушающий сокет
+    if (listen(listen_socket, 10) == SOCKET_ERROR)
+    {
+        cerr << "listen failed with error: " << WSAGetLastError() << "\n";
+        closesocket(listen_socket);
+        WSACleanup();
+        return 1;
+    }
+    const int max_client_buffer_size = 1024;
+    char buf[max_client_buffer_size];
+    int client_socket = INVALID_SOCKET;
+    for (;;) // Принимаем входящие соединения
+    {
+        client_socket = accept(listen_socket, NULL, NULL);
+        if (client_socket == INVALID_SOCKET)
+        {
+            cerr << "accept failed: " << WSAGetLastError() << "\n";
+            closesocket(listen_socket);
+            WSACleanup();
+            return 1;
+        }
+        result =
+            recv(client_socket, buf, max_client_buffer_size, 0);
+        std::stringstream response;
+        // сюда будет записываться ответ клиенту
+        std::stringstream response_body; // тело ответа
+        if (result == SOCKET_ERROR)
+        {
+            // ошибка получения данных
+            cerr << "recv failed: " << result << "\n";
+            closesocket(client_socket);
+        }
+        else if (result == 0)
+        {
+            // соединение закрыто клиентом
+            cerr << "connection closed...\n";
+        }
+        else if (result > 0)
+        {
+            buf[result] = '\0';   // Данные успешно получены
+            // формируем тело ответа (HTML)
+            response_body << "<title>Test C++ HTTP Server</title>\n"
+                << "<h1>Test page</h1>\n"
+                << "<p>This is body of the test page...</p>\n"
+                << "<h2>Request headers</h2>\n"
+                << "<pre>" << buf << "</pre>\n"
+                << "<em><small>Test C++ Http Server</small></em>\n";
+
+            // Формируем весь ответ вместе с заголовками
+            response << "HTTP/1.1 200 OK\r\n" << "Version: HTTP/1.1\r\n" << "Content-Type: text/html; charset=utf-8\r\n" << "Content-Length: " << response_body.str().length()
+                << "\r\n\r\n" << response_body.str();
+            /*
+            * в ответе клиента делаешь редирект на любой другой сайт
+            */
+            // Отправляем ответ клиенту 
+            result =
+                send(client_socket, response.str().c_str(),
+                    response.str().length(), 0);
+            if (result == SOCKET_ERROR)
+            {    // произошла ошибка при отправке данных
+                cerr << "send failed:" << WSAGetLastError() << "\n";
+            }
+            // Закрываем соединение к клиентом
+            closesocket(client_socket);
+        }
+
+    } // конец for(;;)
+     // Убираем за собой
+    closesocket(listen_socket); //закрываем слушающий сокет
+    freeaddrinfo(addr); //освобождаем память
+    WSACleanup(); //удаляем все используемые сокеты
+    return 0;
+}
